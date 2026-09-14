@@ -30,12 +30,16 @@ pipeline {
                 sh '''
                     docker run --rm \
                       -v "$WORKSPACE:/workspace" \
+                      -v /var/lib/jenkins/go-cache:/go/pkg/mod \
+                      -v /var/lib/jenkins/go-build-cache:/root/.cache/go-build \
                       -w /workspace/src/shippingservice \
                       golang:1.27 \
                       go test ./...
 
                     docker run --rm \
                       -v "$WORKSPACE:/workspace" \
+                      -v /var/lib/jenkins/go-cache:/go/pkg/mod \
+                      -v /var/lib/jenkins/go-build-cache:/root/.cache/go-build \
                       -w /workspace/src/productcatalogservice \
                       golang:1.27 \
                       go test ./...
