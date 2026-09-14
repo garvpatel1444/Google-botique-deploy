@@ -39,6 +39,7 @@ ENV PYTHONUNBUFFERED=1
 ENV ENABLE_PROFILER=1
 
 RUN apk update \
+    && apk upgrade \
     && apk add --no-cache libstdc++ \
     && rm -rf /var/cache/apk/*
 
@@ -46,6 +47,9 @@ WORKDIR /email_server
 
 # Grab packages from builder
 COPY --from=builder /usr/local/lib/python3.14/ /usr/local/lib/python3.14/
+
+RUN rm -rf /usr/local/lib/python3.14/site-packages/pip \
+           /usr/local/lib/python3.14/site-packages/pip-*.dist-info
 
 # Add the application
 COPY . .
