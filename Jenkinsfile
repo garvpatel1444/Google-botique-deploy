@@ -4,7 +4,7 @@ pipeline {
 
     environment {
         DOCKER_REGISTRY = 'docker.io'
-        IMAGE_PREFIX = 'garvdeploy/online-boutique'
+        IMAGE_PREFIX = 'garvdeploy'
         K8S_NAMESPACE = 'online-boutique'
     }
 
@@ -105,6 +105,10 @@ pipeline {
                 sh '''
                     set -e
 
+                    echo "======================================"
+                    echo " Running Trivy Security Scans "
+                    echo "======================================"
+
                     trivy image --exit-code 1 --severity CRITICAL,HIGH \
                         ${IMAGE_PREFIX}/frontend:${IMAGE_TAG}
 
@@ -137,6 +141,11 @@ pipeline {
 
                     trivy image --exit-code 1 --severity CRITICAL,HIGH \
                         ${IMAGE_PREFIX}/loadgenerator:${IMAGE_TAG}
+
+                    echo "======================================"
+                    echo " Security Scan Passed "
+                    echo " No HIGH or CRITICAL vulnerabilities "
+                    echo "======================================"
                 '''
             }
         }
@@ -151,7 +160,9 @@ pipeline {
                     )
                 ]) {
                     sh '''
-                        echo "$DOCKER_TOKEN" | docker login \
+                        set -e
+
+                        echo "$DOCKER_TOKEN" | docker login docker.io \
                             -u "$DOCKER_USER" \
                             --password-stdin
 
@@ -167,7 +178,7 @@ pipeline {
                         docker push ${IMAGE_PREFIX}/recommendationservice:${IMAGE_TAG}
                         docker push ${IMAGE_PREFIX}/shippingservice:${IMAGE_TAG}
 
-                        docker logout
+                        docker logout docker.io
                     '''
                 }
             }
@@ -177,10 +188,15 @@ pipeline {
             steps {
                 sh '''
                     helm lint ./helm-chart
+
                     helm template online-boutique ./helm-chart \
                         --set images.repository=${IMAGE_PREFIX} \
                         --set images.tag=${IMAGE_TAG} \
                         > /tmp/online-boutique-rendered.yaml
+
+                    echo "======================================"
+                    echo " Helm Validation Passed "
+                    echo "======================================"
                 '''
             }
         }
@@ -205,11 +221,23 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 sh '''
+                    echo "======================================"
+                    echo " Kubernetes Pods "
+                    echo "======================================"
+
                     microk8s kubectl get pods \
                         -n ${K8S_NAMESPACE}
 
+                    echo "======================================"
+                    echo " Kubernetes Services "
+                    echo "======================================"
+
                     microk8s kubectl get services \
                         -n ${K8S_NAMESPACE}
+
+                    echo "======================================"
+                    echo " Checking Deployments "
+                    echo "======================================"
 
                     microk8s kubectl rollout status deployment/frontend \
                         -n ${K8S_NAMESPACE} \
@@ -246,6 +274,10 @@ pipeline {
                     microk8s kubectl rollout status deployment/shippingservice \
                         -n ${K8S_NAMESPACE} \
                         --timeout=300s
+
+                    echo "======================================"
+                    echo " Kubernetes Deployment Verified "
+                    echo "======================================"
                 '''
             }
         }
@@ -253,18 +285,27 @@ pipeline {
         stage('Smoke Test') {
             steps {
                 sh '''
+                    echo "======================================"
+                    echo " Smoke Test "
+                    echo "======================================"
+
                     microk8s kubectl get ingress \
                         -n ${K8S_NAMESPACE}
 
                     microk8s kubectl get pods \
                         -n ${K8S_NAMESPACE} \
                         --field-selector=status.phase!=Running
+
+                    echo "======================================"
+                    echo " Smoke Test Completed "
+                    echo "======================================"
                 '''
             }
         }
     }
 
     post {
+
         success {
             echo '======================================'
             echo ' ONLINE BOUTIQUE DEPLOYMENT SUCCESSFUL '
