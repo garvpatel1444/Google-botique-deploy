@@ -1,2 +1,7 @@
 locust==2.43.0
 faker==40.1.0
+# Security fixes
+python-engineio==4.13.2
+python-socketio==5.16.2
+urllib3==2.7.0
+msgpack==1.2.1
