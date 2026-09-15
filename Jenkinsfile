@@ -204,83 +204,46 @@ pipeline {
         stage('Deploy to MicroK8s') {
             steps {
                 sh '''
-                    microk8s kubectl create namespace ${K8S_NAMESPACE} \
-                        --dry-run=client -o yaml | \
-                        microk8s kubectl apply -f -
+                    set -e
+
+                    echo "======================================"
+                    echo "Deploying to MicroK8s"
+                    echo "======================================"
+
+                    microk8s kubectl create namespace online-boutique \
+                      --dry-run=client -o yaml | microk8s kubectl apply -f -
 
                     helm upgrade --install online-boutique ./helm-chart \
-                        --namespace ${K8S_NAMESPACE} \
-                        --set images.repository=${IMAGE_PREFIX} \
-                        --set images.tag=${IMAGE_TAG} \
-                        --wait \
-                        --timeout 10m
-                '''
+                      --kubeconfig=/var/lib/jenkins/.kube/config \
+                      --namespace online-boutique \
+                      --set images.repository=${IMAGE_PREFIX} \
+                      --set images.tag=${IMAGE_TAG} \
+                      --wait \
+                      --timeout 10m
+                   '''
             }
         }
 
         stage('Verify Deployment') {
-            steps {
-                sh '''
-                    echo "======================================"
-                    echo " Kubernetes Pods "
-                    echo "======================================"
+    steps {
+        sh '''
+            set -e
 
-                    microk8s kubectl get pods \
-                        -n ${K8S_NAMESPACE}
+            echo "======================================"
+            echo "Verifying Deployment"
+            echo "======================================"
 
-                    echo "======================================"
-                    echo " Kubernetes Services "
-                    echo "======================================"
+            kubectl --kubeconfig=/var/lib/jenkins/.kube/config \
+              get deployments -n online-boutique
 
-                    microk8s kubectl get services \
-                        -n ${K8S_NAMESPACE}
+            kubectl --kubeconfig=/var/lib/jenkins/.kube/config \
+              get pods -n online-boutique
 
-                    echo "======================================"
-                    echo " Checking Deployments "
-                    echo "======================================"
-
-                    microk8s kubectl rollout status deployment/frontend \
-                        -n ${K8S_NAMESPACE} \
-                        --timeout=300s
-
-                    microk8s kubectl rollout status deployment/cartservice \
-                        -n ${K8S_NAMESPACE} \
-                        --timeout=300s
-
-                    microk8s kubectl rollout status deployment/checkoutservice \
-                        -n ${K8S_NAMESPACE} \
-                        --timeout=300s
-
-                    microk8s kubectl rollout status deployment/currencyservice \
-                        -n ${K8S_NAMESPACE} \
-                        --timeout=300s
-
-                    microk8s kubectl rollout status deployment/emailservice \
-                        -n ${K8S_NAMESPACE} \
-                        --timeout=300s
-
-                    microk8s kubectl rollout status deployment/paymentservice \
-                        -n ${K8S_NAMESPACE} \
-                        --timeout=300s
-
-                    microk8s kubectl rollout status deployment/productcatalogservice \
-                        -n ${K8S_NAMESPACE} \
-                        --timeout=300s
-
-                    microk8s kubectl rollout status deployment/recommendationservice \
-                        -n ${K8S_NAMESPACE} \
-                        --timeout=300s
-
-                    microk8s kubectl rollout status deployment/shippingservice \
-                        -n ${K8S_NAMESPACE} \
-                        --timeout=300s
-
-                    echo "======================================"
-                    echo " Kubernetes Deployment Verified "
-                    echo "======================================"
-                '''
-            }
-        }
+            kubectl --kubeconfig=/var/lib/jenkins/.kube/config \
+              get services -n online-boutique
+        '''
+    }
+}
 
         stage('Smoke Test') {
             steps {
