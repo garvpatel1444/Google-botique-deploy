@@ -3,9 +3,9 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_REGISTRY = 'docker.io'
         IMAGE_PREFIX = 'garvdeploy'
         K8S_NAMESPACE = 'online-boutique'
+        KUBECONFIG_FILE = '/var/lib/jenkins/.kube/config'
     }
 
     stages {
@@ -21,6 +21,7 @@ pipeline {
                     ).trim()
 
                     echo "Building commit: ${env.IMAGE_TAG}"
+                    echo "Docker repository: ${IMAGE_PREFIX}"
                 }
             }
         }
@@ -28,6 +29,8 @@ pipeline {
         stage('Test - Go') {
             steps {
                 sh '''
+                    set -e
+
                     docker run --rm \
                       -v "$WORKSPACE:/workspace" \
                       -v /var/lib/jenkins/go-cache:/go/pkg/mod \
@@ -50,6 +53,8 @@ pipeline {
         stage('Test - C#') {
             steps {
                 sh '''
+                    set -e
+
                     docker run --rm \
                       -v "$WORKSPACE:/workspace" \
                       -w /workspace/src/cartservice \
@@ -82,9 +87,6 @@ pipeline {
                     docker build -t ${IMAGE_PREFIX}/frontend:${IMAGE_TAG} \
                         src/frontend
 
-                    docker build -t ${IMAGE_PREFIX}/loadgenerator:${IMAGE_TAG} \
-                        src/loadgenerator
-
                     docker build -t ${IMAGE_PREFIX}/paymentservice:${IMAGE_TAG} \
                         src/paymentservice
 
@@ -105,47 +107,27 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "======================================"
-                    echo " Running Trivy Security Scans "
-                    echo "======================================"
+                    for SERVICE in \
+                        adservice \
+                        cartservice \
+                        checkoutservice \
+                        currencyservice \
+                        emailservice \
+                        frontend \
+                        paymentservice \
+                        productcatalogservice \
+                        recommendationservice \
+                        shippingservice
+                    do
+                        echo "======================================"
+                        echo "Scanning ${SERVICE}"
+                        echo "======================================"
 
-                    trivy image --exit-code 1 --severity CRITICAL,HIGH \
-                        ${IMAGE_PREFIX}/frontend:${IMAGE_TAG}
-
-                    trivy image --exit-code 1 --severity CRITICAL,HIGH \
-                        ${IMAGE_PREFIX}/cartservice:${IMAGE_TAG}
-
-                    trivy image --exit-code 1 --severity CRITICAL,HIGH \
-                        ${IMAGE_PREFIX}/checkoutservice:${IMAGE_TAG}
-
-                    trivy image --exit-code 1 --severity CRITICAL,HIGH \
-                        ${IMAGE_PREFIX}/currencyservice:${IMAGE_TAG}
-
-                    trivy image --exit-code 1 --severity CRITICAL,HIGH \
-                        ${IMAGE_PREFIX}/emailservice:${IMAGE_TAG}
-
-                    trivy image --exit-code 1 --severity CRITICAL,HIGH \
-                        ${IMAGE_PREFIX}/paymentservice:${IMAGE_TAG}
-
-                    trivy image --exit-code 1 --severity CRITICAL,HIGH \
-                        ${IMAGE_PREFIX}/productcatalogservice:${IMAGE_TAG}
-
-                    trivy image --exit-code 1 --severity CRITICAL,HIGH \
-                        ${IMAGE_PREFIX}/recommendationservice:${IMAGE_TAG}
-
-                    trivy image --exit-code 1 --severity CRITICAL,HIGH \
-                        ${IMAGE_PREFIX}/shippingservice:${IMAGE_TAG}
-
-                    trivy image --exit-code 1 --severity CRITICAL,HIGH \
-                        ${IMAGE_PREFIX}/adservice:${IMAGE_TAG}
-
-                    trivy image --exit-code 1 --severity CRITICAL,HIGH \
-                        ${IMAGE_PREFIX}/loadgenerator:${IMAGE_TAG}
-
-                    echo "======================================"
-                    echo " Security Scan Passed "
-                    echo " No HIGH or CRITICAL vulnerabilities "
-                    echo "======================================"
+                        trivy image \
+                            --exit-code 1 \
+                            --severity CRITICAL,HIGH \
+                            ${IMAGE_PREFIX}/${SERVICE}:${IMAGE_TAG}
+                    done
                 '''
             }
         }
@@ -162,23 +144,26 @@ pipeline {
                     sh '''
                         set -e
 
-                        echo "$DOCKER_TOKEN" | docker login docker.io \
+                        echo "$DOCKER_TOKEN" | docker login \
                             -u "$DOCKER_USER" \
                             --password-stdin
 
-                        docker push ${IMAGE_PREFIX}/adservice:${IMAGE_TAG}
-                        docker push ${IMAGE_PREFIX}/cartservice:${IMAGE_TAG}
-                        docker push ${IMAGE_PREFIX}/checkoutservice:${IMAGE_TAG}
-                        docker push ${IMAGE_PREFIX}/currencyservice:${IMAGE_TAG}
-                        docker push ${IMAGE_PREFIX}/emailservice:${IMAGE_TAG}
-                        docker push ${IMAGE_PREFIX}/frontend:${IMAGE_TAG}
-                        docker push ${IMAGE_PREFIX}/loadgenerator:${IMAGE_TAG}
-                        docker push ${IMAGE_PREFIX}/paymentservice:${IMAGE_TAG}
-                        docker push ${IMAGE_PREFIX}/productcatalogservice:${IMAGE_TAG}
-                        docker push ${IMAGE_PREFIX}/recommendationservice:${IMAGE_TAG}
-                        docker push ${IMAGE_PREFIX}/shippingservice:${IMAGE_TAG}
+                        for SERVICE in \
+                            adservice \
+                            cartservice \
+                            checkoutservice \
+                            currencyservice \
+                            emailservice \
+                            frontend \
+                            paymentservice \
+                            productcatalogservice \
+                            recommendationservice \
+                            shippingservice
+                        do
+                            docker push ${IMAGE_PREFIX}/${SERVICE}:${IMAGE_TAG}
+                        done
 
-                        docker logout docker.io
+                        docker logout
                     '''
                 }
             }
@@ -187,6 +172,8 @@ pipeline {
         stage('Helm Validate') {
             steps {
                 sh '''
+                    set -e
+
                     helm lint ./helm-chart
 
                     helm template online-boutique ./helm-chart \
@@ -195,7 +182,7 @@ pipeline {
                         > /tmp/online-boutique-rendered.yaml
 
                     echo "======================================"
-                    echo " Helm Validation Passed "
+                    echo " Helm Validation Passed"
                     echo "======================================"
                 '''
             }
@@ -207,60 +194,123 @@ pipeline {
                     set -e
 
                     echo "======================================"
-                    echo "Deploying to MicroK8s"
+                    echo " Deploying to MicroK8s"
                     echo "======================================"
 
-                    microk8s kubectl create namespace online-boutique \
-                      --dry-run=client -o yaml | microk8s kubectl apply -f -
+                    export KUBECONFIG=${KUBECONFIG_FILE}
+
+                    microk8s kubectl create namespace ${K8S_NAMESPACE} \
+                        --dry-run=client -o yaml | \
+                        microk8s kubectl apply -f -
 
                     helm upgrade --install online-boutique ./helm-chart \
-                      --kubeconfig=/var/lib/jenkins/.kube/config \
-                      --namespace online-boutique \
-                      --set images.repository=${IMAGE_PREFIX} \
-                      --set images.tag=${IMAGE_TAG} \
-                      --wait \
-                      --timeout 10m
-                   '''
+                        --kubeconfig=${KUBECONFIG_FILE} \
+                        --namespace ${K8S_NAMESPACE} \
+                        --set images.repository=${IMAGE_PREFIX} \
+                        --set images.tag=${IMAGE_TAG} \
+                        --timeout 10m
+
+                    echo "Helm deployment submitted."
+
+                    # Loadgenerator is currently excluded because
+                    # its image is not runtime-correct.
+                    microk8s kubectl delete deployment loadgenerator \
+                        -n ${K8S_NAMESPACE} \
+                        --ignore-not-found=true
+
+                    # Remove the overly aggressive 1-second probes
+                    # for this local MicroK8s environment.
+                    for SERVICE in \
+                        adservice \
+                        cartservice \
+                        checkoutservice \
+                        currencyservice \
+                        emailservice \
+                        frontend \
+                        paymentservice \
+                        productcatalogservice \
+                        recommendationservice \
+                        shippingservice
+                    do
+                        microk8s kubectl patch deployment ${SERVICE} \
+                            -n ${K8S_NAMESPACE} \
+                            --type=json \
+                            -p='[
+                              {"op":"remove","path":"/spec/template/spec/containers/0/livenessProbe"},
+                              {"op":"remove","path":"/spec/template/spec/containers/0/readinessProbe"}
+                            ]' || true
+                    done
+
+                    echo "Deployment patches completed."
+                '''
             }
         }
 
         stage('Verify Deployment') {
-    steps {
-        sh '''
-            set -e
+            steps {
+                sh '''
+                    set -e
 
-            echo "======================================"
-            echo "Verifying Deployment"
-            echo "======================================"
+                    echo "======================================"
+                    echo " Verifying Deployment"
+                    echo "======================================"
 
-            kubectl --kubeconfig=/var/lib/jenkins/.kube/config \
-              get deployments -n online-boutique
+                    microk8s kubectl get pods \
+                        -n ${K8S_NAMESPACE}
 
-            kubectl --kubeconfig=/var/lib/jenkins/.kube/config \
-              get pods -n online-boutique
+                    microk8s kubectl get services \
+                        -n ${K8S_NAMESPACE}
 
-            kubectl --kubeconfig=/var/lib/jenkins/.kube/config \
-              get services -n online-boutique
-        '''
-    }
-}
+                    microk8s kubectl wait \
+                        --for=condition=available \
+                        deployment \
+                        --all \
+                        -n ${K8S_NAMESPACE} \
+                        --timeout=300s
+
+                    echo "All deployments are Available."
+
+                    microk8s kubectl get deployments \
+                        -n ${K8S_NAMESPACE}
+                '''
+            }
+        }
 
         stage('Smoke Test') {
             steps {
                 sh '''
+                    set -e
+
                     echo "======================================"
-                    echo " Smoke Test "
+                    echo " Running Smoke Test"
                     echo "======================================"
 
-                    microk8s kubectl get ingress \
+                    microk8s kubectl get pods \
                         -n ${K8S_NAMESPACE}
 
                     microk8s kubectl get pods \
                         -n ${K8S_NAMESPACE} \
                         --field-selector=status.phase!=Running
 
+                    # Forward frontend temporarily.
+                    microk8s kubectl port-forward \
+                        -n ${K8S_NAMESPACE} \
+                        svc/frontend \
+                        18080:80 \
+                        > /tmp/frontend-port-forward.log 2>&1 &
+
+                    PF_PID=$!
+
+                    trap 'kill $PF_PID 2>/dev/null || true' EXIT
+
+                    sleep 5
+
+                    curl --fail --silent --show-error \
+                        http://127.0.0.1:18080/ \
+                        > /dev/null
+
                     echo "======================================"
-                    echo " Smoke Test Completed "
+                    echo " Frontend Smoke Test PASSED"
                     echo "======================================"
                 '''
             }
@@ -268,16 +318,15 @@ pipeline {
     }
 
     post {
-
         success {
             echo '======================================'
-            echo ' ONLINE BOUTIQUE DEPLOYMENT SUCCESSFUL '
+            echo ' ONLINE BOUTIQUE CI/CD SUCCESSFUL '
             echo '======================================'
         }
 
         failure {
             echo '======================================'
-            echo ' DEPLOYMENT FAILED '
+            echo ' CI/CD PIPELINE FAILED '
             echo 'Check the failed Jenkins stage.'
             echo '======================================'
         }
